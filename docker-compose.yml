@@ -14,6 +14,9 @@ volumes:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
+  lightrag_storage:
+  lightrag_input:
+  lightrag_logs:
 
 x-n8n: &service-n8n
   image: n8nio/n8n:latest
@@ -36,10 +39,9 @@ x-ollama: &service-ollama
   expose:
     - 11434/tcp
   environment:
-    - OLLAMA_CONTEXT_LENGTH=8192
     - OLLAMA_FLASH_ATTENTION=1
     - OLLAMA_KV_CACHE_TYPE=q8_0
-    - OLLAMA_MAX_LOADED_MODELS=2
+    - OLLAMA_MAX_LOADED_MODELS=4
   volumes:
     - ollama_storage:/root/.ollama
 
@@ -52,6 +54,10 @@ x-init-ollama: &init-ollama
   command:
     - "-c"
     - "sleep 3; OLLAMA_HOST=ollama:11434 ollama pull qwen2.5:7b-instruct-q4_K_M; OLLAMA_HOST=ollama:11434 ollama pull nomic-embed-text"
+    # For a larger context length verison of the model, run these commands:
+    # echo "FROM qwen2.5:7b-instruct-q4_K_M\n\nPARAMETER num_ctx 8096" > Modelfile
+    # ollama create qwen2.5:7b-8k -f ./Modelfile
+    # Change the name of the LLM and num_ctx as you see fit.
 
 services:
   flowise:
@@ -63,9 +69,9 @@ services:
     environment:
         - PORT=3001
         - FLOWISE_USERNAME=${FLOWISE_USERNAME}
-        - FLOWISE_PASSWORD=${FLOWISE_PASSWORD}
+        - FLOWISE_PASSWORD=${FLOWISE_PASSWORD}  
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"        
     volumes:
         - ~/.flowise:/root/.flowise
     entrypoint: /bin/sh -c "sleep 3; flowise start"
@@ -89,7 +95,7 @@ services:
       - "-c"
       - "n8n import:credentials --separate --input=/backup/credentials && n8n import:workflow --separate --input=/backup/workflows"
     volumes:
-      - ./n8n/backup:/backup
+      - ./n8n/backup:/backup  
 
   n8n:
     <<: *service-n8n
@@ -128,7 +134,116 @@ services:
       - 7687/tcp
     environment:
         - NEO4J_AUTH=${NEO4J_AUTH:-"neo4j/your_password"}
-    restart: always
+    restart: always      
+
+  graphiti-server:
+    image: zepai/graphiti:latest
+    container_name: graphiti-server
+    restart: unless-stopped
+    expose:
+      - 8009/tcp
+    # volumes:
+    #   - ./graphiti-entrypoint.sh:/entrypoint.sh:ro
+    # entrypoint: ["/entrypoint.sh"]
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NEO4J_URI=bolt://localai-neo4j-1:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=25FS69oQGXe7wfaA
+      - PORT=8009
+    networks:
+      - default
+    depends_on:
+      - neo4j
+
+  graphiti-mcp:
+    image: zepai/knowledge-graph-mcp:latest
+    container_name: graphiti-mcp
+    restart: unless-stopped
+    expose:
+      - 8010/tcp
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=25FS69oQGXe7wfaA
+      - EMBEDDING_PROVIDER=openai
+      - EMBEDDING_MODEL=text-embedding-3-small
+      - EMBEDDING_DIM=1536
+      - VECTOR_DIMENSION=1536
+      - MODEL_NAME=${MODEL_NAME:-gpt-4o-mini}
+      - SMALL_MODEL_NAME=${SMALL_MODEL_NAME:-gpt-4o-mini}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.1}
+      - SEMAPHORE_LIMIT=${SEMAPHORE_LIMIT:-10}
+    ports:
+      - "8010:8010"  
+    networks:
+      - default
+    depends_on:
+      - neo4j
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  lightrag:
+    image: ghcr.io/hkuds/lightrag:latest
+    container_name: lightrag-server
+    restart: unless-stopped
+    expose:
+      - 9621/tcp
+    environment:
+      # Server Configuration
+      - HOST=0.0.0.0
+      - PORT=9621
+      - WORKERS=2
+
+      # Authorization and security
+      - API_KEY=${LIGHTRAG_API_KEY}
+      # JWT авторизация (логин/пароль для Web UI)
+      - AUTH_ACCOUNTS=${LIGHTRAG_AUTH_ACCOUNTS}
+      - TOKEN_SECRET=${LIGHTRAG_TOKEN_SECRET}
+      - TOKEN_EXPIRE_HOURS=${LIGHTRAG_TOKEN_EXPIRE_HOURS}
+      
+      # LLM Configuration (OpenAI)
+      - LLM_BINDING=openai
+      - LLM_MODEL=gpt-4o-mini
+      - LLM_BINDING_HOST=https://api.openai.com/v1
+      - LLM_BINDING_API_KEY=${OPENAI_API_KEY}
+      - TIMEOUT=200
+      - TEMPERATURE=0.0
+      - MAX_ASYNC=4
+      - MAX_TOKENS=32768
+      
+      # Embedding Configuration (OpenAI)
+      - EMBEDDING_BINDING=openai
+      - EMBEDDING_BINDING_HOST=https://api.openai.com/v1
+      - EMBEDDING_MODEL=text-embedding-3-large
+      - EMBEDDING_DIM=3072
+      - EMBEDDING_BINDING_API_KEY=${OPENAI_API_KEY}
+      
+      # Reranking Configuration
+      - RERANK_MODEL=linux6200/bge-reranker-v2-m3:latest
+      - RERANK_BINDING_HOST=http://ollama:11434
+      - RERANK_BINDING_API_KEY=your_api_key_here
+      
+      # Document Processing
+      - ENABLE_LLM_CACHE_FOR_EXTRACT=false
+      - SUMMARY_LANGUAGE=English
+      - MAX_PARALLEL_INSERT=2
+      
+      # Working Directory
+    volumes:
+      - lightrag_storage:/app/data/rag_storage
+      - lightrag_input:/app/input
+      - lightrag_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9621/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
   caddy:
     container_name: caddy
@@ -144,7 +259,6 @@ services:
       - 80/tcp
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./caddy-addon:/etc/caddy/addons:ro
       - caddy-data:/data:rw
       - caddy-config:/config:rw
     environment:
@@ -156,6 +270,8 @@ services:
       - SEARXNG_HOSTNAME=${SEARXNG_HOSTNAME:-":8006"}
       - LANGFUSE_HOSTNAME=${LANGFUSE_HOSTNAME:-":8007"}
       - NEO4J_HOSTNAME=${NEO4J_HOSTNAME:-":8008"}
+      - GRAPHITI_HOSTNAME=${GRAPHITI_HOSTNAME:-":8009"}
+      - LIGHTRAG_HOSTNAME=${LIGHTRAG_HOSTNAME:-":8011"}
       - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-internal}
     cap_drop:
       - ALL
@@ -172,7 +288,7 @@ services:
     restart: always
     depends_on: &langfuse-depends-on
       postgres:
-        condition: service_healthy
+        condition: service_healthy    
       minio:
         condition: service_healthy
       redis:
@@ -303,7 +419,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: postgres
     volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
+      - langfuse_postgres_data:/var/lib/postgresql/data              
 
   redis:
     container_name: redis
@@ -329,7 +445,7 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 10s
-      retries: 10
+      retries: 10        
 
   searxng:
     container_name: searxng
@@ -353,7 +469,7 @@ services:
       driver: "json-file"
       options:
         max-size: "1m"
-        max-file: "1"
+        max-file: "1"      
 
   ollama-cpu:
     profiles: ["cpu"]
@@ -396,5 +512,3 @@ services:
     image: ollama/ollama:rocm
     depends_on:
      - ollama-gpu-amd
-
-# new test git line
