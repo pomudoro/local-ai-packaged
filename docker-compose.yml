@@ -41,7 +41,7 @@ x-ollama: &service-ollama
   environment:
     - OLLAMA_FLASH_ATTENTION=1
     - OLLAMA_KV_CACHE_TYPE=q8_0
-    - OLLAMA_MAX_LOADED_MODELS=4
+    - OLLAMA_MAX_LOADED_MODELS=2
   volumes:
     - ollama_storage:/root/.ollama
 
@@ -259,6 +259,7 @@ services:
       - 80/tcp
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-addon:/etc/caddy/addons:ro
       - caddy-data:/data:rw
       - caddy-config:/config:rw
     environment:
