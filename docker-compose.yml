@@ -207,21 +207,21 @@ services:
       - TOKEN_EXPIRE_HOURS=${LIGHTRAG_TOKEN_EXPIRE_HOURS}
       
       # LLM Configuration (OpenAI)
-      - LLM_BINDING=openai
-      - LLM_MODEL=gpt-4o-mini
-      - LLM_BINDING_HOST=https://api.openai.com/v1
-      - LLM_BINDING_API_KEY=${OPENAI_API_KEY}
+      - LLM_BINDING=ollama
+      - LLM_MODEL=qwen3:30b-32K
+      - LLM_BINDING_HOST=http://ollama:11434
+      #- LLM_BINDING_API_KEY=${OPENAI_API_KEY}
       - TIMEOUT=200
       - TEMPERATURE=0.0
       - MAX_ASYNC=4
-      - MAX_TOKENS=32768
+      #- MAX_TOKENS=32768
       
       # Embedding Configuration (OpenAI)
-      - EMBEDDING_BINDING=openai
-      - EMBEDDING_BINDING_HOST=https://api.openai.com/v1
-      - EMBEDDING_MODEL=text-embedding-3-large
-      - EMBEDDING_DIM=3072
-      - EMBEDDING_BINDING_API_KEY=${OPENAI_API_KEY}
+      - EMBEDDING_BINDING=ollama
+      - EMBEDDING_BINDING_HOST=http://ollama:11434
+      - EMBEDDING_MODEL=bge-m3:latest
+      - EMBEDDING_DIM=1024
+      #- EMBEDDING_BINDING_API_KEY=${OPENAI_API_KEY}
       
       # Reranking Configuration
       - RERANK_MODEL=linux6200/bge-reranker-v2-m3:latest
